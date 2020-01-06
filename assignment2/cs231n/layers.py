@@ -823,8 +823,10 @@ def spatial_batchnorm_forward(x, gamma, beta, bn_param):
     # Your implementation should be very short; ours is less than five lines. #
     ###########################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
+    N,C,H,W = x.shape
+    x = x.transpose(0,2,3,1).reshape(N*H*W, C)
+    out, cache = batchnorm_forward(x, gamma, beta, bn_param)
+    out = out.reshape(N,H,W,C).transpose(0,3,1,2)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ###########################################################################
@@ -858,7 +860,10 @@ def spatial_batchnorm_backward(dout, cache):
     ###########################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N,C,H,W = dout.shape
+    dout = dout.transpose(0,2,3,1).reshape(N*H*W,C)
+    dx,dgamma,dbeta = batchnorm_backward_alt(dout, cache)
+    dx = dx.reshape(N,H,W,C).transpose(0,3,1,2)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ###########################################################################
@@ -897,9 +902,25 @@ def spatial_groupnorm_forward(x, gamma, beta, G, gn_param):
     # and layer normalization!                                                # 
     ###########################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
-
+    N,C,H,W = x.shape
+    assert C%G == 0
+    
+    x = x.reshape(N*G,C//G*H*W).T
+    gamma = gamma.reshape(1,C,1,1)
+    beta = beta.reshape(1,C,1,1)
+    
+    mb = np.mean(x, axis = 0)
+    x_c = x - mb
+    x_c_sq = x_c**2
+    var = np.mean(x_c_sq, axis = 0)
+    std = np.sqrt(var + eps)
+    std_den = 1.0/std
+    x_norm = x_c*std_den
+    x_norm = x_norm.T.reshape(N,C,H,W)
+    x_norm_rescaled = gamma*x_norm
+    out = x_norm_rescaled + beta
+        
+    cache = (mb, x_c, x_c_sq, var, std, std_den, x_norm, gamma, G, x_norm_rescaled)
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -928,7 +949,44 @@ def spatial_groupnorm_backward(dout, cache):
     ###########################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    mb, x_c, x_c_sq, var, std, std_den, x_norm, gamma, G, x_norm_rescaled = cache
+    N,C,H,W =dout.shape
+        
+    # delta x = 1
+    dx_norm_rescaled = dout
+    # delta x = 1
+    dbeta = np.sum(dx_norm_rescaled.transpose(1,0,2,3).reshape(C,N*H*W),axis = 1).reshape(1,C,1,1)
+    # delta xy/delta x = y
+    dgamma = np.sum((dx_norm_rescaled*x_norm).transpose(1,0,2,3).reshape(C,N*H*W),axis = 1).reshape(1,C,1,1)
+    # delta xy/delta x = y
+    dx_norm = dx_norm_rescaled*gamma
+    dx_norm = dx_norm.reshape(N*G,C//G*H*W).T
+    n,d = dx_norm.shape
+    # delta xy/delta x = y
+    dx_c1 = dx_norm*std_den
+    # delta xy/delta x = y
+    dstd_den = np.sum(dx_norm*x_c, axis = 0)
+    # delta x**-1/delta x = -x**-2
+    dstd = dstd_den*(-1/(std**2))
+    # delta (x+a)**1/2 / delta x = 1/2*(x+a)**-1/2
+    dvar = dstd*1.0/(2*std)
+    # delta x/n / delta x = 1/n
+    dx_c_sq = dvar * 1/n * np.ones([n,d])
+    # delta x**2 / delta x = 2*x
+    dx_c2 = dx_c_sq * 2 * x_c
+    
+    dx_c = dx_c1 + dx_c2
+    # delta x / delta x = 1
+    dx1 = dx_c
+    # delta -x / delta x = -1
+    dmu = - dx_c.sum(axis = 0)
+    
+    # delta x/n / delta x = 1/n
+    dx2 = dmu * 1/n * np.ones([n,d])
+    dx = dx1 + dx2
+    
+    dx = dx.T.reshape(N,C,H,W)
+    
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ###########################################################################
